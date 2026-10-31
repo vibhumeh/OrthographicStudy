@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reading Study (English)</title>
+<style>
+  body{font-family:system-ui,"Noto Sans Devanagari","Nirmala UI",sans-serif;background:#f6f6f4;color:#222;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}
+  #app{background:#fff;max-width:560px;width:92%;padding:32px;border-radius:12px;box-shadow:0 2px 12px #0001;text-align:center}
+  .word{font-size:56px;margin:48px 0;line-height:1.3}
+  button{font-size:18px;padding:12px 28px;border:0;border-radius:8px;background:#2b5fd9;color:#fff;cursor:pointer}
+  button.opt{display:block;width:100%;margin:10px 0;background:#eef1f8;color:#222;font-size:26px}
+  button.opt:hover{background:#dbe4fa}
+  input{font-size:18px;padding:10px;width:80%;margin:8px 0}
+  .small{color:#777;font-size:14px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+/* ===================== CONFIG ===================== */
+// Paste your Google Apps Script web-app URL here (see apps-script.gs). Leave "" to only keep a CSV backup.
+const SUBMIT_URL = "";
+const LANGUAGE = "English";
+// word = real word, scrambled = scrambled form, options = 3 distractors (correct word is added at runtime)
+const WORDS = [
+ {
+  "word": "Library",
+  "scrambled": "Libarry",
+  "options": [
+   "Liberty",
+   "Literary",
+   "Luggage"
+  ]
+ },
+ {
+  "word": "Fantastic",
+  "scrambled": "Fanasttic",
+  "options": [
+   "Fanatic",
+   "Fantasy",
+   "Plastic"
+  ]
+ },
+ {
+  "word": "Elaborate",
+  "scrambled": "Elabroate",
+  "options": [
+   "Elevator",
+   "Celebrate",
+   "Collaborate"
+  ]
+ },
+ {
+  "word": "Partition",
+  "scrambled": "Patrition",
+  "options": [
+   "Petition",
+   "Position",
+   "Tradition"
+  ]
+ },
+ {
+  "word": "Beautiful",
+  "scrambled": "Beauitful",
+  "options": [
+   "Bountiful",
+   "Beautician",
+   "Dutiful"
+  ]
+ },
+ {
+  "word": "Handle",
+  "scrambled": "Hadnle",
+  "options": [
+   "Candle",
+   "Hurdle",
+   "Hassle"
+  ]
+ },
+ {
+  "word": "Possibly",
+  "scrambled": "Possilby",
+  "options": [
+   "Probably",
+   "Possession",
+   "Portable"
+  ]
+ },
+ {
+  "word": "Chinese",
+  "scrambled": "Chnise",
+  "options": [
+   "Chimney",
+   "Cheese",
+   "Chicken"
+  ]
+ },
+ {
+  "word": "Pineapple",
+  "scrambled": "Pieanpple",
+  "options": [
+   "Paperwork",
+   "Pinnacle",
+   "Pancakes"
+  ]
+ },
+ {
+  "word": "Password",
+  "scrambled": "Paswsord",
+  "options": [
+   "Passport",
+   "Passage",
+   "Pastoral"
+  ]
+ },
+ {
+  "word": "Channel",
+  "scrambled": "Chnanel",
+  "options": [
+   "Chapel",
+   "Cancel",
+   "Tunnel"
+  ]
+ },
+ {
+  "word": "Powerful",
+  "scrambled": "Powreful",
+  "options": [
+   "Peaceful",
+   "Pitiful",
+   "Plentiful"
+  ]
+ },
+ {
+  "word": "Scramble",
+  "scrambled": "Scrabmle",
+  "options": [
+   "Scribble",
+   "Stumble",
+   "Crumble"
+  ]
+ },
+ {
+  "word": "Tractor",
+  "scrambled": "Tratcor",
+  "options": [
+   "Traitor",
+   "Trailer",
+   "Tremor"
+  ]
+ },
+ {
+  "word": "Fireworks",
+  "scrambled": "Fireorwks",
+  "options": [
+   "Fireplace",
+   "Firewood",
+   "Frameworks"
+  ]
+ }
+];
+const N_BASELINE = 5;      // words shown unscrambled (rest are scrambled)
+const ROUND_SIZE = 3;      // words shown, then that many questions
+/* ================================================== */
+
+const app = document.getElementById("app");
+const shuffle = a => { a = a.slice(); for (let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
+const session = {pid:"", sid: Date.now().toString(36)+Math.random().toString(36).slice(2,6)};
+let rows = [];
+let trials = [], pages = [], idx = 0, tStart = 0, hiddenMs = 0, hiddenAt = null;
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) hiddenAt = performance.now();
+  else if (hiddenAt !== null) { hiddenMs += performance.now() - hiddenAt; hiddenAt = null; }
+});
+
+// Random baseline assignment per participant, so each word is baseline for some people and scrambled for others.
+// Every round of 3 has exactly 1 baseline + 2 scrambled, in random order.
+function buildPages() {
+  const items = shuffle(WORDS);
+  const nRounds = Math.floor(items.length / ROUND_SIZE);
+  const base = items.slice(0, N_BASELINE);
+  const scr = items.slice(N_BASELINE);
+  trials = [];
+  for (let r = 0; r < nRounds; r++) {
+    const round = shuffle([
+      {...base[r], baseline: true},
+      {...scr[2*r], baseline: false},
+      {...scr[2*r+1], baseline: false},
+    ]);
+    round.forEach(t => { t.shown = t.baseline ? t.word : t.scrambled; trials.push(t); });
+  }
+  trials.forEach((t, i) => { t.order = i + 1; });
+  pages = [];
+  for (let r = 0; r < nRounds; r++) {
+    const rt = trials.slice(r*ROUND_SIZE, (r+1)*ROUND_SIZE);
+    rt.forEach((t, k) => pages.push({kind:"word", t, pos:k+1}));
+    rt.forEach((t, k) => pages.push({kind:"question", t, pos:k+1}));
+  }
+}
+
+function start() {
+  app.innerHTML = `
+    <h2>Reading Study</h2>
+    <p>You will see one word per page. Read the word and click <b>Next</b> as soon as you have read it.
+    After three words, you will be asked to pick each word you saw from four options.
+    Please do not go back or switch tabs.</p>
+    <p><input id="pid" placeholder="Participant ID"></p>
+    <p><button id="go">Start</button></p>`;
+  document.getElementById("go").onclick = () => {
+    session.pid = document.getElementById("pid").value.trim();
+    if (!session.pid) return alert("Please enter your participant ID.");
+    buildPages(); idx = 0; show();
+  };
+}
+
+const elapsed = () => (performance.now() - tStart - hiddenMs) / 1000;
+const tooSoon = () => performance.now() - tStart < 300;   // ignore accidental double-clicks
+
+function show() {
+  if (idx >= pages.length) return finish();
+  const p = pages[idx];
+  hiddenMs = 0; hiddenAt = document.hidden ? performance.now() : null;
+  if (p.kind === "word") {
+    app.innerHTML = `<div class="small">Word ${p.pos}</div><div class="word">${p.t.shown}</div><button id="next">Next</button>`;
+    tStart = performance.now();
+    document.getElementById("next").onclick = () => {
+      if (tooSoon()) return;
+      p.t.timeWord = elapsed(); idx++; show();
+    };
+  } else {
+    const opts = shuffle([p.t.word, ...p.t.options]);
+    app.innerHTML = `<h3>What was word ${p.pos}?</h3>` + opts.map(o => `<button class="opt" data-v="${o}">${o}</button>`).join("");
+    tStart = performance.now();
+    app.querySelectorAll(".opt").forEach(b => b.onclick = () => {
+      if (tooSoon()) return;
+      p.t.timeChoice = elapsed(); p.t.chosen = b.dataset.v; idx++; show();
+    });
+  }
+}
+
+const r3 = x => Math.round(x * 1000) / 1000;
+
+async function finish() {
+  const ts = new Date().toISOString();
+  rows = trials.map(t => ({
+    participant: session.pid,
+    word: t.word,
+    scrambled_form: t.baseline ? "" : t.scrambled,
+    time_choosing_option_s: r3(t.timeChoice),
+    time_on_word_s: r3(t.timeWord),
+    is_baseline: t.baseline ? 1 : 0,
+    chose_correct: t.chosen === t.word ? 1 : 0,
+    chosen_option: t.chosen,
+    trial_order: t.order,
+    language: LANGUAGE,
+    session_id: session.sid,
+    timestamp: ts
+  }));
+  try { localStorage.setItem("jumble_" + LANGUAGE + "_" + session.sid, JSON.stringify(rows)); } catch(e) {}
+  app.innerHTML = `<h2>Thank you!</h2><p id="status">Saving your responses…</p>`;
+  let status = "Responses saved on this device only.";
+  if (SUBMIT_URL) {
+    try {
+      await fetch(SUBMIT_URL, {method:"POST", mode:"no-cors", headers:{"Content-Type":"text/plain"}, body: JSON.stringify(rows)});
+      status = "Your responses have been submitted.";
+    } catch (e) { status = "Could not submit automatically. Please download the file below and send it to the researchers."; }
+  }
+  document.getElementById("status").textContent = status;
+  const cols = Object.keys(rows[0]);
+  const esc = v => `"${String(v).replace(/"/g,'""')}"`;
+  const csv = "﻿" + [cols.join(","), ...rows.map(r => cols.map(c => esc(r[c])).join(","))].join("\n");
+  const url = URL.createObjectURL(new Blob([csv], {type:"text/csv;charset=utf-8"}));
+  app.insertAdjacentHTML("beforeend", `<p><a download="${session.pid}_${LANGUAGE}_${session.sid}.csv" href="${url}">Download backup CSV</a></p>`);
+}
+
+start();
+</script>
+</body>
+</html>
